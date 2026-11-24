@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>COMP-2 / EXPAND-2 — finite-context arithmetic coder</title>
+<style>
+  :root {
+    --bg: #000; --panel: #111; --line: #555; --dim: #666;
+    --fg: #ddd; --amber: #EEE; --green: #9e8; --red: #f65;
+    --mono: ui-monospace, "JetBrains Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 var(--mono); }
+  body { padding: 28px 18px 60px; }
+  .wrap { max-width: 920px; margin: 0 auto; }
+  header { border-bottom: 1px dashed var(--line); padding-bottom: 14px; margin-bottom: 20px; }
+  h1 { margin: 0; font-size: 22px; letter-spacing: .04em; color: var(--amber); font-weight: 700; }
+  h1 span { color: var(--dim); font-weight: 400; }
+  .sub { color: var(--dim); margin-top: 4px; font-size: 12.5px; }
+  .tabs { display: flex; gap: 0; margin-bottom: -1px; }
+  .tab { background: none; border: 1px solid transparent; border-bottom: none; color: var(--dim);
+         font: inherit; padding: 8px 18px; cursor: pointer; letter-spacing: .08em; text-transform: uppercase; font-size: 12.5px; }
+  .tab[aria-selected="true"] { color: var(--amber); border-color: var(--line); background: var(--panel); }
+  .panel { border: 1px solid var(--line); background: var(--panel); padding: 18px; }
+  .drop { border: 1px dashed var(--line); padding: 18px; text-align: center; color: var(--dim); cursor: pointer; transition: border-color .15s, color .15s; }
+  .drop:hover, .drop.over { border-color: var(--amber); color: var(--fg); }
+  .drop b { color: var(--fg); font-weight: 500; }
+  .or { text-align: center; color: var(--dim); margin: 10px 0; font-size: 12px; }
+  textarea { width: 100%; min-height: 110px; resize: vertical; background: var(--bg); color: var(--fg);
+             border: 1px solid var(--line); padding: 10px; font: 13px/1.45 var(--mono); }
+  textarea:focus, select:focus, button:focus-visible { outline: 1px solid var(--amber); outline-offset: 1px; }
+  .opts { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; margin: 16px 0 4px; }
+  label { color: var(--dim); }
+  select { background: var(--bg); color: var(--fg); border: 1px solid var(--line); font: inherit; padding: 4px 6px; }
+  input[type=checkbox] { accent-color: var(--amber); vertical-align: -2px; }
+  .btn { background: var(--amber); color: #1a1205; border: none; font: inherit; font-weight: 700; padding: 8px 18px; cursor: pointer; letter-spacing: .05em; }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .btn.ghost { background: none; color: var(--amber); border: 1px solid var(--amber); font-weight: 500; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .spacer { flex: 1; }
+  .meta { color: var(--dim); font-size: 12.5px; }
+  .bar { height: 3px; background: var(--line); margin: 16px 0 0; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--amber); transition: width .1s; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); margin-top: 16px; }
+  .stat { background: var(--bg); padding: 10px 12px; }
+  .stat .k { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+  .stat .v { font-size: 18px; color: var(--fg); margin-top: 2px; }
+  .out { margin-top: 16px; }
+  pre { margin: 10px 0 0; background: var(--bg); border: 1px solid var(--line); padding: 10px; max-height: 280px; overflow: auto;
+        font: 12px/1.45 var(--mono); white-space: pre-wrap; word-break: break-all; color: var(--green); }
+  .msg { margin-top: 14px; padding: 8px 12px; border-left: 3px solid var(--dim); background: var(--bg); }
+  .msg.ok { border-color: var(--green); color: var(--green); }
+  .msg.err { border-color: var(--red); color: var(--red); }
+  .hidden { display: none !important; }
+  details { margin-top: 26px; color: var(--dim); font-size: 12.5px; }
+  details summary { cursor: pointer; color: var(--fg); }
+  details p { margin: 8px 0; }
+  code { color: var(--amber); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>COMP-2 <span>/</span> EXPAND-2</h1>
+    <div class="sub">Variable-order finite-context model + 16-bit arithmetic coder &middot; JavaScript port of Mark Nelson's code (Dr. Dobb's Journal, 1991) &middot; byte-compatible with the C original</div>
+  </header>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" aria-selected="true" data-mode="comp">Compress</button>
+    <button class="tab" role="tab" aria-selected="false" data-mode="exp">Expand</button>
+  </div>
+
+  <div class="panel">
+    <div class="drop" id="drop" tabindex="0">
+      <div id="dropText"><b>Drop a file here</b> or click to choose</div>
+      <input type="file" id="file" class="hidden">
+    </div>
+    <div id="textBlock">
+      <div class="or">— or type / paste text —</div>
+      <textarea id="text" spellcheck="false" placeholder="She sells sea shells by the sea shore..."></textarea>
+    </div>
+
+    <div class="opts">
+      <label>Order <select id="order"></select></label>
+      <label id="flushWrap"><input type="checkbox" id="flushing" checked> Flush model when local ratio &gt; 90%</label>
+      <span class="spacer"></span>
+      <button class="btn" id="run">COMPRESS</button>
+    </div>
+    <div class="meta" id="srcMeta">No input.</div>
+
+    <div class="bar"><i id="prog"></i></div>
+
+    <div class="stats hidden" id="stats"></div>
+    <div id="msg" class="msg hidden"></div>
+
+    <div class="out hidden" id="out">
+      <div class="row">
+        <button class="btn ghost" id="dl">Download</button>
+        <button class="btn ghost" id="toExp">Expand this &rarr;</button>
+        <button class="btn ghost" id="verify">Verify round-trip</button>
+        <span class="spacer"></span>
+        <span class="meta" id="previewLabel"></span>
+      </div>
+      <pre id="preview"></pre>
+    </div>
+  </div>
+
+  <details>
+    <summary>About this format</summary>
+    <p>Each byte is coded in the longest context (up to the chosen order) where it has been seen; otherwise an ESCAPE is sent and the coder drops to a shorter context, down to an order -1 table holding every byte value. Order -2 carries the special <code>FLUSH</code> and <code>DONE</code> symbols. Symbols already ruled out in a higher order are excluded from lower-order totals, and only contexts that were used get their counts updated.</p>
+    <p>Every 256 symbols the compressor checks the ratio for the recent stretch; if output exceeds 90% of input it sends <code>FLUSH</code>, which halves every count in the model on both sides.</p>
+    <p>The stream has no header, so <b>the order is not stored in the file</b>: you have to expand with the same order you compressed with. A wrong order usually fails with a sync error, but it can also produce garbage. Files are interchangeable with the DOS/Unix <code>comp-2</code>/<code>expand-2</code> builds.</p>
+  </details>
+</div>
+
+<script>
+/* ---- Port of Mark Nelson's COMP-2 / EXPAND-2 (model-2.c, coder.c, bitio.c) ---- */
+const MAXIMUM_SCALE = 16383, ESCAPE = 256, DONE = -1, FLUSH = -2;
+
+/* ---------- bitio ---------- */
+class BitOut {
+  constructor() { this.buf = new Uint8Array(1 << 16); this.len = 0; this.rack = 0; this.mask = 0x80; }
+  put(b) {
+    if (this.len === this.buf.length) { const n = new Uint8Array(this.buf.length * 2); n.set(this.buf); this.buf = n; }
+    this.buf[this.len++] = b;
+  }
+  bit(b) {
+    if (b) this.rack |= this.mask;
+    this.mask >>= 1;
+    if (this.mask === 0) { this.put(this.rack); this.rack = 0; this.mask = 0x80; }
+  }
+  flush() { if (this.mask !== 0x80) this.put(this.rack); }
+  bytes() { return this.buf.slice(0, this.len); }
+}
+class BitIn {
+  constructor(data) { this.data = data; this.pos = 0; this.rack = 0; this.mask = 0; this.past = 0; }
+  bit() {
+    if (this.mask === 0) {
+      if (this.pos < this.data.length) this.rack = this.data[this.pos++];
+      else { this.rack = 0; if (++this.past > 8) throw new Error('Ran past end of compressed data (corrupt file or wrong order?)'); }
+      this.mask = 0x80;
+    }
+    const v = this.rack & this.mask;
+    this.mask >>= 1;
+    return v ? 1 : 0;
+  }
+}
+
+/* ---------- coder (16-bit integer arithmetic coder) ---------- */
+class Encoder {
+  constructor(out) { this.out = out; this.low = 0; this.high = 0xffff; this.under = 0; }
+  encode(s) {
+    const range = this.high - this.low + 1;
+    this.high = (this.low + ((Math.floor(range * s.high / s.scale) - 1) & 0xffff)) & 0xffff;
+    this.low = (this.low + (Math.floor(range * s.low / s.scale) & 0xffff)) & 0xffff;
+    for (;;) {
+      if ((this.high & 0x8000) === (this.low & 0x8000)) {
+        this.out.bit(this.high & 0x8000);
+        while (this.under > 0) { this.out.bit(~this.high & 0x8000); this.under--; }
+      } else if ((this.low & 0x4000) && !(this.high & 0x4000)) {
+        this.under++; this.low &= 0x3fff; this.high |= 0x4000;
+      } else return;
+      this.low = (this.low << 1) & 0xffff;
+      this.high = ((this.high << 1) | 1) & 0xffff;
+    }
+  }
+  finish() {
+    this.out.bit(this.low & 0x4000);
+    this.under++;
+    while (this.under-- > 0) this.out.bit(~this.low & 0x4000);
+  }
+}
+class Decoder {
+  constructor(inp) {
+    this.inp = inp; this.code = 0;
+    for (let i = 0; i < 16; i++) this.code = ((this.code << 1) + inp.bit()) & 0xffff;
+    this.low = 0; this.high = 0xffff;
+  }
+  count(s) {
+    const range = this.high - this.low + 1;
+    const c = Math.trunc(((this.code - this.low + 1) * s.scale - 1) / range);
+    return (c << 16) >> 16; /* short int */
+  }
+  remove(s) {
+    const range = this.high - this.low + 1;
+    this.high = (this.low + ((Math.floor(range * s.high / s.scale) - 1) & 0xffff)) & 0xffff;
+    this.low = (this.low + (Math.floor(range * s.low / s.scale) & 0xffff)) & 0xffff;
+    for (;;) {
+      if ((this.high & 0x8000) === (this.low & 0x8000)) { /* nothing */ }
+      else if ((this.low & 0x4000) === 0x4000 && (this.high & 0x4000) === 0) {
+        this.code ^= 0x4000; this.low &= 0x3fff; this.high |= 0x4000;
+      } else return;
+      this.low = (this.low << 1) & 0xffff;
+      this.high = ((this.high << 1) | 1) & 0xffff;
+      this.code = ((this.code << 1) + this.inp.bit()) & 0xffff;
+    }
+  }
+}
+
+/* ---------- model-2 (PPM-style finite context model with exclusion) ----------
+ * Each CONTEXT keeps its STATS as two packed arrays: sy[] (symbol) and ct[] (count).
+ * sy === null corresponds to stats == NULL in the C code. */
+function newContext(lesser) { return { max_index: -1, links: null, sy: null, ct: null, lesser }; }
+
+class Model {
+  constructor(maxOrder) {
+    this.max_order = maxOrder;
+    this.ctx = new Array(maxOrder + 3);          /* index = order + 2 */
+    this.totals = new Int16Array(258);
+    this.scoreboard = new Uint8Array(256);
+    this.current_order = maxOrder;
+    const nullT = newContext(null);
+    this.ctx[1] = nullT;
+    for (let i = 0; i <= maxOrder; i++)
+      this.ctx[i + 2] = this.allocateNext(this.ctx[i + 1], 0, this.ctx[i + 1]);
+    nullT.sy = []; nullT.ct = [];
+    for (let i = 0; i < 256; i++) { nullT.sy.push(i); nullT.ct.push(1); }
+    nullT.max_index = 255;
+    const ctl = newContext(null);
+    ctl.sy = [(-FLUSH) & 0xff, (-DONE) & 0xff]; ctl.ct = [1, 1];
+    ctl.max_index = 1;
+    this.ctx[0] = ctl;
+  }
+  C(o) { return this.ctx[o + 2]; }
+
+  allocateNext(table, symbol, lesser) {
+    let i;
+    for (i = 0; i <= table.max_index; i++) if (table.sy[i] === symbol) break;
+    if (i > table.max_index) {
+      table.max_index++;
+      if (!table.links) table.links = [];
+      if (!table.sy) { table.sy = []; table.ct = []; }
+      table.sy[i] = symbol; table.ct[i] = 0;
+    }
+    const t = newContext(lesser);
+    table.links[i] = t;
+    return t;
+  }
+
+  update(symbol) {
+    let lo = this.current_order < 0 ? 0 : this.current_order;
+    if (symbol >= 0)
+      for (; lo <= this.max_order; lo++) this.updateTable(this.C(lo), symbol);
+    this.current_order = this.max_order;
+    this.scoreboard.fill(0);
+  }
+
+  updateTable(table, symbol) {
+    let index = 0;
+    const n0 = table.max_index;
+    let sy = table.sy;
+    while (index <= n0 && sy[index] !== symbol) index++;
+    if (index > n0) {
+      table.max_index++;
+      if (this.current_order < this.max_order) {   /* (global current_order, as in the original) */
+        if (table.max_index === 0 || !table.links) table.links = [];
+        table.links[index] = null;
+      }
+      if (table.max_index === 0) { table.sy = []; table.ct = []; sy = table.sy; }
+      sy[index] = symbol; table.ct[index] = 0;
+    }
+    const ct = table.ct;
+    let i = index;
+    const cur = ct[index];
+    while (i > 0 && cur === ct[i - 1]) i--;
+    if (i !== index) {
+      const t = sy[index]; sy[index] = sy[i]; sy[i] = t;
+      const L = table.links;
+      if (L) { const p = L[index]; L[index] = L[i]; L[i] = p; }
+      index = i;
+    }
+    if (++ct[index] === 255) this.rescale(table);
+  }
+
+  intToSymbol(c, s) {
+    const table = this.C(this.current_order), totals = this.totals;
+    this.totalize(table);
+    s.scale = totals[0] & 0xffff;
+    if (this.current_order === -2) c = -c;
+    const sy = table.sy, n = table.max_index;
+    for (let i = 0; i <= n; i++) {
+      if (c === sy[i]) {
+        if (table.ct[i] === 0) break;
+        s.low = totals[i + 2] & 0xffff;
+        s.high = totals[i + 1] & 0xffff;
+        return 0;
+      }
+    }
+    s.low = totals[1] & 0xffff;
+    s.high = totals[0] & 0xffff;
+    this.current_order--;
+    return 1;
+  }
+
+  getScale(s) {
+    this.totalize(this.C(this.current_order));
+    s.scale = this.totals[0] & 0xffff;
+  }
+
+  symbolToInt(count, s) {
+    const table = this.C(this.current_order), totals = this.totals;
+    let c = 0;
+    while (c < 258 && count < totals[c]) c++;
+    if (c === 0 || c >= 258 || c - 2 > table.max_index)
+      throw new Error('Decoder lost sync (corrupt file or wrong order?)');
+    s.high = totals[c - 1] & 0xffff;
+    s.low = totals[c] & 0xffff;
+    if (c === 1) { this.current_order--; return ESCAPE; }
+    const v = table.sy[c - 2];
+    return this.current_order < -1 ? -v : v;
+  }
+
+  addChar(c) {
+    if (this.max_order < 0 || c < 0) return;
+    const mo = this.max_order;
+    this.ctx[mo + 2] = this.shift(this.C(mo), c, mo);
+    for (let i = mo - 1; i > 0; i--) this.ctx[i + 2] = this.ctx[i + 3].lesser;
+  }
+
+  shift(table, c, order) {
+    table = table.lesser;
+    if (order === 0) return table.links[0];
+    const sy = table.sy, n = table.max_index;
+    for (let i = 0; i <= n; i++)
+      if (sy[i] === c) {
+        if (table.links[i]) return table.links[i];
+        break;
+      }
+    const nl = this.shift(table, c, order - 1);
+    return this.allocateNext(table, c, nl);
+  }
+
+  rescale(table) {
+    const n = table.max_index;
+    if (n === -1) return;
+    const ct = table.ct;
+    for (let i = 0; i <= n; i++) ct[i] >>= 1;
+    if (ct[n] === 0 && table.links === null) this.trim(table);
+  }
+  trim(table) {
+    const ct = table.ct;
+    while (table.max_index >= 0 && ct[table.max_index] === 0) table.max_index--;
+    if (table.max_index === -1) { table.sy = null; table.ct = null; }
+    else { table.sy.length = table.max_index + 1; ct.length = table.max_index + 1; }
+  }
+
+  totalize(table) {
+    const totals = this.totals, sb = this.scoreboard, ctl = this.current_order === -2;
+    for (;;) {
+      const sy = table.sy, ct = table.ct;
+      let max = 0, i = table.max_index + 2;
+      totals[i] = 0;
+      for (; i > 1; i--) {
+        totals[i - 1] = totals[i];
+        const n = ct[i - 2];
+        if (n && (ctl || sb[sy[i - 2]] === 0)) totals[i - 1] += n;
+        if (n > max) max = n;
+      }
+      if (max === 0) totals[0] = 1;
+      else {
+        totals[0] = 256 - table.max_index;
+        totals[0] *= table.max_index;
+        totals[0] = Math.trunc(totals[0] / 256);
+        totals[0] = Math.trunc(totals[0] / max);
+        totals[0]++;
+        totals[0] += totals[1];
+      }
+      if (totals[0] < MAXIMUM_SCALE) break;
+      this.rescale(table);
+    }
+    const sy = table.sy, ct = table.ct;
+    for (let i = 0; i < table.max_index; i++)      /* (sic: < not <=, as in the original) */
+      if (ct[i] !== 0) sb[sy[i]] = 1;
+  }
+
+  flush() { this.recursiveFlush(this.C(0), 0); }
+  recursiveFlush(table, depth) {
+    /* leaf (max_order) tables never hold real links, so skip the scan there */
+    const links = table.links;
+    if (links && depth < this.max_order) {
+      const d = depth + 1, n = table.max_index;
+      for (let i = 0; i <= n; i++) { const t = links[i]; if (t) this.recursiveFlush(t, d); }
+    }
+    this.rescale(table);
+  }
+}
+
+/* ---------- comp-2 driver (incremental) ---------- */
+class Compressor {
+  constructor(input, { order = 3, flushing = true } = {}) {
+    this.input = input; this.inPos = 0;
+    this.model = new Model(order); this.flushing = flushing;
+    this.out = new BitOut(); this.coder = new Encoder(this.out);
+    this.textCount = 0; this.flushPending = 0; this.flushes = 0;
+    this.inMark = 0; this.outMark = 0; this.done = false;
+  }
+  checkCompression() {
+    let ib = this.inPos - this.inMark, ob = this.out.len - this.outMark;
+    if (ob === 0) ob = 1;
+    if (ib === 0) ib = 1;
+    const ratio = Math.trunc(ob * 100 / ib);
+    this.inMark = this.inPos; this.outMark = this.out.len;
+    return ratio > 90 && this.flushing ? 1 : 0;
+  }
+  step(budget) {               /* returns true when finished */
+    const m = this.model, s = { low: 0, high: 0, scale: 0 };
+    while (budget-- > 0) {
+      if ((++this.textCount & 0xff) === 0) this.flushPending = this.checkCompression();
+      let c = !this.flushPending ? (this.inPos < this.input.length ? this.input[this.inPos++] : DONE) : FLUSH;
+      let esc;
+      do { esc = m.intToSymbol(c, s); this.coder.encode(s); } while (esc);
+      if (c === DONE) {
+        this.coder.finish(); this.out.flush(); this.done = true; return true;
+      }
+      if (c === FLUSH) { m.flush(); this.flushPending = 0; this.flushes++; }
+      m.update(c);
+      m.addChar(c);
+    }
+    return false;
+  }
+  result() { return this.out.bytes(); }
+}
+
+/* ---------- expand-2 driver (incremental) ---------- */
+class Expander {
+  constructor(data, { order = 3 } = {}) {
+    this.data = data; this.inp = new BitIn(data);
+    this.model = new Model(order); this.coder = new Decoder(this.inp);
+    this.out = new BitOut(); this.flushes = 0; this.done = false;
+  }
+  step(budget) {
+    const m = this.model, s = { low: 0, high: 0, scale: 0 };
+    while (budget-- > 0) {
+      let c;
+      do {
+        m.getScale(s);
+        if (s.scale === 0) throw new Error('Decoder lost sync (corrupt file or wrong order?)');
+        const count = this.coder.count(s);
+        c = m.symbolToInt(count, s);
+        this.coder.remove(s);
+      } while (c === ESCAPE);
+      if (c === DONE) { this.done = true; return true; }
+      if (c !== FLUSH) this.out.put(c);
+      else { m.flush(); this.flushes++; }
+      m.update(c);
+      m.addChar(c);
+    }
+    return false;
+  }
+  get inPos() { return this.inp.pos; }
+  result() { return this.out.bytes(); }
+}
+
+
+
+(() => {
+  const $ = id => document.getElementById(id);
+  const fmt = n => n.toLocaleString('en-US');
+  let mode = 'comp';
+  const state = { comp: { src: null, name: '' }, exp: { src: null, name: '' } };
+  let result = null, running = false;
+
+  for (let o = 0; o <= 7; o++) $('order').add(new Option(String(o), o, o === 3, o === 3));
+
+  /* ---- mode switching ---- */
+  function setMode(m) {
+    mode = m;
+    document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.mode === m));
+    $('run').textContent = m === 'comp' ? 'COMPRESS' : 'EXPAND';
+    $('flushWrap').classList.toggle('hidden', m !== 'comp');
+    $('textBlock').classList.toggle('hidden', m !== 'comp');
+    $('toExp').classList.add('hidden'); $('verify').classList.add('hidden');
+    clearOutput(); updateMeta();
+  }
+  document.querySelectorAll('.tab').forEach(t => t.onclick = () => !running && setMode(t.dataset.mode));
+
+  function clearOutput() {
+    result = null;
+    ['stats', 'msg', 'out'].forEach(id => $(id).classList.add('hidden'));
+    $('prog').style.width = '0';
+  }
+
+  /* ---- input ---- */
+  function currentInput() {
+    const st = state[mode];
+    if (st.src) return st;
+    if (mode === 'comp' && $('text').value.length)
+      return { src: new TextEncoder().encode($('text').value), name: 'text.txt' };
+    return null;
+  }
+  function updateMeta() {
+    const st = state[mode];
+    if (st.src) {
+      $('dropText').innerHTML = `<b>${escapeHtml(st.name)}</b> &middot; ${fmt(st.src.length)} bytes &middot; <span style="text-decoration:underline">clear</span>`;
+    } else $('dropText').innerHTML = mode === 'comp'
+      ? '<b>Drop a file here</b> or click to choose'
+      : '<b>Drop a compressed file here</b> or click to choose';
+    const inp = currentInput();
+    $('srcMeta').textContent = inp ? `Input: ${inp.name} (${fmt(inp.src.length)} bytes)` : 'No input.';
+  }
+  function escapeHtml(s) { return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+  async function loadFile(f) {
+    state[mode] = { src: new Uint8Array(await f.arrayBuffer()), name: f.name };
+    clearOutput(); updateMeta();
+  }
+  $('drop').onclick = e => {
+    if (state[mode].src && e.target.closest('span')) { state[mode] = { src: null, name: '' }; clearOutput(); updateMeta(); return; }
+    $('file').click();
+  };
+  $('drop').onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } };
+  $('file').onchange = e => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ''; };
+  ['dragenter', 'dragover'].forEach(ev => $('drop').addEventListener(ev, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => $('drop').addEventListener(ev, e => { e.preventDefault(); $('drop').classList.remove('over'); }));
+  $('drop').addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
+  $('text').oninput = () => { clearOutput(); updateMeta(); };
+
+  /* ---- running ---- */
+  function runJob(job, total, posFn) {
+    return new Promise((resolve, reject) => {
+      const tick = () => {
+        try {
+          const t0 = performance.now();
+          let done = false;
+          while (!done && performance.now() - t0 < 30) done = job.step(2048);
+          $('prog').style.width = (total ? Math.min(100, 100 * posFn() / total) : 100) + '%';
+          if (done) resolve(); else setTimeout(tick, 0);
+        } catch (err) { reject(err); }
+      };
+      tick();
+    });
+  }
+
+  function showStats(pairs) {
+    $('stats').innerHTML = pairs.map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+    $('stats').classList.remove('hidden');
+  }
+  function showMsg(text, kind) { const m = $('msg'); m.textContent = text; m.className = 'msg ' + (kind || ''); }
+
+  function setBusy(b) {
+    running = b;
+    ['run', 'order', 'flushing', 'dl', 'toExp', 'verify'].forEach(id => $(id).disabled = b);
+  }
+
+  $('run').onclick = async () => {
+    const inp = currentInput();
+    if (!inp) { showMsg('Give me something to work on first.', 'err'); return; }
+    clearOutput(); setBusy(true);
+    const order = +$('order').value, t0 = performance.now();
+    try {
+      if (mode === 'comp') {
+        const job = new Compressor(inp.src, { order, flushing: $('flushing').checked });
+        await runJob(job, inp.src.length, () => job.inPos);
+        const out = job.result(), ms = performance.now() - t0;
+        result = { bytes: out, name: inp.name.replace(/\.[^.]*$/, '') + '.cmp', from: inp, order };
+        showStats([
+          ['Input', fmt(inp.src.length) + ' B'], ['Output', fmt(out.length) + ' B'],
+          ['Bits / byte', inp.src.length ? (8 * out.length / inp.src.length).toFixed(3) : '—'],
+          ['Ratio', inp.src.length ? (100 * out.length / inp.src.length).toFixed(1) + '%' : '—'],
+          ['Flushes', fmt(job.flushes)], ['Time', ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(2) + ' s']
+        ]);
+        $('previewLabel').textContent = `hex, first ${Math.min(out.length, 512)} bytes`;
+        $('preview').textContent = hexdump(out.subarray(0, 512));
+        $('toExp').classList.remove('hidden'); $('verify').classList.remove('hidden');
+      } else {
+        const job = new Expander(inp.src, { order });
+        await runJob(job, inp.src.length, () => job.inPos);
+        const out = job.result(), ms = performance.now() - t0;
+        result = { bytes: out, name: inp.name.replace(/\.cmp$/i, '') + '.out' };
+        showStats([
+          ['Compressed', fmt(inp.src.length) + ' B'], ['Expanded', fmt(out.length) + ' B'],
+          ['Bits / byte', out.length ? (8 * inp.src.length / out.length).toFixed(3) : '—'],
+          ['Flushes', fmt(job.flushes)], ['Time', ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(2) + ' s']
+        ]);
+        renderPreview(out);
+      }
+      $('out').classList.remove('hidden');
+    } catch (err) {
+      showMsg(err.message, 'err');
+    } finally { setBusy(false); }
+  };
+
+  function renderPreview(bytes) {
+    const head = bytes.subarray(0, 4096);
+    let text = null;
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(head.length < bytes.length ? trimUtf8(head) : head); } catch (_) {}
+    const printable = text !== null && !/[\x00-\x08\x0e-\x1f]/.test(text);
+    if (printable) {
+      $('previewLabel').textContent = `text, first ${fmt(head.length)} bytes`;
+      $('preview').textContent = text + (bytes.length > head.length ? '\n…' : '');
+    } else {
+      $('previewLabel').textContent = `hex, first ${Math.min(bytes.length, 512)} bytes`;
+      $('preview').textContent = hexdump(bytes.subarray(0, 512));
+    }
+  }
+  function trimUtf8(b) { let n = b.length; while (n > 0 && (b[n - 1] & 0xc0) === 0x80) n--; return n > 0 && b[n - 1] >= 0xc0 ? b.subarray(0, n - 1) : b.subarray(0, n); }
+
+  function hexdump(b) {
+    let s = '';
+    for (let i = 0; i < b.length; i += 16) {
+      const row = b.subarray(i, i + 16);
+      s += i.toString(16).padStart(6, '0') + '  ' +
+           Array.from(row, x => x.toString(16).padStart(2, '0')).join(' ').padEnd(48) + '  ' +
+           Array.from(row, x => x >= 32 && x < 127 ? String.fromCharCode(x) : '.').join('') + '\n';
+    }
+    return s || '(empty)';
+  }
+
+  $('dl').onclick = () => {
+    if (!result) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([result.bytes], { type: 'application/octet-stream' }));
+    a.download = result.name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
+
+  $('toExp').onclick = () => {
+    if (!result) return;
+    const r = result;
+    setMode('exp');
+    state.exp = { src: r.bytes, name: r.name };
+    $('order').value = r.order;
+    updateMeta();
+  };
+
+  $('verify').onclick = async () => {
+    if (!result || !result.from) return;
+    setBusy(true);
+    try {
+      const job = new Expander(result.bytes, { order: result.order });
+      await runJob(job, result.bytes.length, () => job.inPos);
+      const a = job.result(), b = result.from.src;
+      const ok = a.length === b.length && a.every((x, i) => x === b[i]);
+      showMsg(ok ? `Round-trip OK: ${fmt(a.length)} bytes restored exactly.` : `Mismatch! Expanded ${fmt(a.length)} bytes vs ${fmt(b.length)} original.`, ok ? 'ok' : 'err');
+    } catch (err) { showMsg('Round-trip failed: ' + err.message, 'err'); }
+    finally { setBusy(false); }
+  };
+
+  setMode('comp');
+})();
+</script>
+</body>
+</html>
